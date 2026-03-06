@@ -23,8 +23,18 @@ Open:
 
 ## Demo Credentials
 
-- Operator: `operator / queue123`
+- Operator (per loket):
+  - `op-loket-1 / queue123 / PIN 1001`
+  - `op-loket-2 / queue123 / PIN 1002`
+  - `op-loket-3 / queue123 / PIN 1003`
+  - `op-loket-4 / queue123 / PIN 1004`
+  - `op-loket-5 / queue123 / PIN 1005`
+  - `op-loket-6 / queue123 / PIN 1006`
 - Admin: `admin / admin123`
+
+Optional secure operator route:
+
+- `http://localhost:5173/operator/loket-3` (locks login flow to loket 3)
 
 ## Real-time Mode
 
@@ -37,4 +47,3 @@ PUBLIC_SOCKET_URL=http://localhost:3000
 ```
 
 The display will show reconnecting status and retry every 3 seconds when disconnected.
-
