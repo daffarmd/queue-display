@@ -1,0 +1,88 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
+@import "tailwindcss";
+
+:root {
+	--color-primary: #1e63d5;
+	--color-primary-dark: #174ea6;
+	--color-primary-light: #4a8cf0;
+	--color-queue-active: #f4b400;
+	--color-queue-soft: #facc15;
+	--status-serving: #16a34a;
+	--status-calling: #f7c948;
+	--status-idle: #9ca3af;
+	--status-offline: #dc2626;
+	--color-bg-main: #f5f7fb;
+	--color-card: #ffffff;
+	--color-soft-panel: #eef2f7;
+	--color-text-primary: #1f2937;
+	--color-text-secondary: #6b7280;
+	--color-text-muted: #9ca3af;
+	--color-promo: #c62828;
+	--color-promo-dark: #991b1b;
+	--line-soft: #26466f;
+}
+
+html,
+body {
+	min-height: 100%;
+	background:
+		radial-gradient(circle at 14% 8%, #d7e8ff 0%, transparent 33%),
+		radial-gradient(circle at 90% 14%, #e6eefc 0%, transparent 35%),
+		var(--color-bg-main);
+	color: var(--color-text-primary);
+	font-family: "Inter", "Segoe UI", sans-serif;
+}
+
+body {
+	margin: 0;
+}
+
+.panel {
+	background: var(--color-card);
+	border: 1px solid #d9e2ee;
+	border-radius: 1.1rem;
+	box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+	color: var(--color-text-primary);
+}
+
+.tv-display {
+	background:
+		linear-gradient(180deg, rgba(74, 140, 240, 0.08), transparent 35%),
+		var(--color-bg-main);
+}
+
+.tv-header {
+	background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+	border: 1px solid rgba(23, 78, 166, 0.28);
+	border-radius: 1.2rem;
+	box-shadow: 0 16px 30px rgba(30, 99, 213, 0.24);
+}
+
+.tv-card {
+	background: var(--color-card);
+	border: 1px solid #d9e2ee;
+	border-radius: 1.1rem;
+	box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.tv-soft {
+	background: var(--color-soft-panel);
+	border: 1px solid #d9e2ee;
+	border-radius: 0.95rem;
+}
+
+.field {
+	width: 100%;
+	border-radius: 0.7rem;
+	border: 1px solid #c7d3e3;
+	background: #ffffff;
+	padding: 0.65rem 0.85rem;
+	color: #1f2937;
+	outline: none;
+	transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.field:focus {
+	border-color: #4a8cf0;
+	box-shadow: 0 0 0 3px rgba(74, 140, 240, 0.2);
+}
