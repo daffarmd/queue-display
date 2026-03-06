@@ -9,6 +9,17 @@
 			: ticket?.status === 'called'
 				? 'text-[#F4B400]'
 				: 'text-slate-400';
+
+	$: statusLabel =
+		ticket?.status === 'serving'
+			? 'Sedang Dilayani'
+			: ticket?.status === 'called'
+				? 'Memanggil'
+				: ticket?.status === 'completed'
+					? 'Selesai'
+					: ticket?.status === 'skipped'
+						? 'Dilewati'
+						: 'Menunggu';
 </script>
 
 <section class="tv-card flex min-h-[20rem] flex-col justify-between p-6 md:p-8">
@@ -31,10 +42,14 @@
 			class={`mt-6 rounded-xl border px-4 py-3 text-sm md:text-base ${
 				ticket.status === 'serving'
 					? 'border-green-200 bg-green-50 text-green-700'
-					: 'border-amber-200 bg-amber-50 text-amber-700'
+					: ticket.status === 'called'
+						? 'border-amber-200 bg-amber-50 text-amber-700'
+						: ticket.status === 'completed'
+							? 'border-slate-200 bg-slate-50 text-slate-700'
+							: 'border-rose-200 bg-rose-50 text-rose-700'
 			}`}
 		>
-			Status: {ticket.status === 'serving' ? 'Sedang Dilayani' : 'Memanggil'}
+			Status: {statusLabel}
 		</div>
 	{/if}
 </section>

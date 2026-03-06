@@ -36,7 +36,7 @@
 
 	<section class="panel p-6">
 		<h3 class="text-lg font-semibold text-slate-900">Demo Credentials</h3>
-		<p class="mt-2 text-slate-600">Operator: <code>operator / queue123</code></p>
+		<p class="mt-2 text-slate-600">Operator Loket 1: <code>op-loket-1 / queue123 / PIN 1001</code></p>
 		<p class="text-slate-600">Admin: <code>admin / admin123</code></p>
 	</section>
 </main>

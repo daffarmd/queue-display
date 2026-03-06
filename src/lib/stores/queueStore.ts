@@ -99,6 +99,11 @@ function toEndedTicket(ticket: QueueTicket, status: 'completed' | 'skipped'): Qu
 	};
 }
 
+function isSameQueueTicket(left: QueueTicket | null, right: QueueTicket): boolean {
+	if (!left) return false;
+	return left.queue === right.queue && left.counterId === right.counterId;
+}
+
 export function takeNumber(service: ServiceConfig): QueueTicket {
 	const prefix = service.prefix.trim().toUpperCase();
 	let createdTicket = makeTicket(`${prefix}0001`, service.id, service.name);
@@ -194,7 +199,8 @@ export function markServing(counterId: number): QueueTicket | null {
 			activeByCounter: {
 				...current.activeByCounter,
 				[counterKey(counterId)]: serving
-			}
+			},
+			latestCall: isSameQueueTicket(current.latestCall, active) ? serving : current.latestCall
 		};
 	});
 
@@ -212,11 +218,13 @@ export function completeCurrent(counterId: number): QueueTicket | null {
 
 		const nextActive = { ...current.activeByCounter };
 		delete nextActive[counterKey(counterId)];
+		const nextLatest = isSameQueueTicket(current.latestCall, active) ? completed : current.latestCall;
 
 		return {
 			...current,
 			activeByCounter: nextActive,
-			history: [completed, ...current.history]
+			history: [completed, ...current.history],
+			latestCall: nextLatest
 		};
 	});
 
@@ -234,11 +242,13 @@ export function skipCurrent(counterId: number): QueueTicket | null {
 
 		const nextActive = { ...current.activeByCounter };
 		delete nextActive[counterKey(counterId)];
+		const nextLatest = isSameQueueTicket(current.latestCall, active) ? skipped : current.latestCall;
 
 		return {
 			...current,
 			activeByCounter: nextActive,
-			history: [skipped, ...current.history]
+			history: [skipped, ...current.history],
+			latestCall: nextLatest
 		};
 	});
 
@@ -312,12 +322,15 @@ export function syncQueueServing(counterId: number): void {
 		const active = current.activeByCounter[counterKey(counterId)];
 		if (!active) return current;
 
+		const serving = toServingTicket(active);
+
 		return {
 			...current,
 			activeByCounter: {
 				...current.activeByCounter,
-				[counterKey(counterId)]: toServingTicket(active)
-			}
+				[counterKey(counterId)]: serving
+			},
+			latestCall: isSameQueueTicket(current.latestCall, active) ? serving : current.latestCall
 		};
 	});
 }
@@ -332,11 +345,13 @@ export function syncQueueCompleted(payload: QueueCompletedPayload): void {
 		const completed = toEndedTicket(ticket, 'completed');
 		const nextActive = { ...current.activeByCounter };
 		delete nextActive[key];
+		const nextLatest = isSameQueueTicket(current.latestCall, ticket) ? completed : current.latestCall;
 
 		return {
 			...current,
 			activeByCounter: nextActive,
-			history: [completed, ...current.history]
+			history: [completed, ...current.history],
+			latestCall: nextLatest
 		};
 	});
 }
@@ -351,11 +366,13 @@ export function syncQueueSkipped(payload: QueueSkippedPayload): void {
 		const skipped = toEndedTicket(ticket, 'skipped');
 		const nextActive = { ...current.activeByCounter };
 		delete nextActive[key];
+		const nextLatest = isSameQueueTicket(current.latestCall, ticket) ? skipped : current.latestCall;
 
 		return {
 			...current,
 			activeByCounter: nextActive,
-			history: [skipped, ...current.history]
+			history: [skipped, ...current.history],
+			latestCall: nextLatest
 		};
 	});
 }
@@ -381,4 +398,3 @@ export function syncQueueTaken(payload: QueueTakenPayload): void {
 export function resetQueueState(): void {
 	queueState.set(initialState);
 }
-

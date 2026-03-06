@@ -55,10 +55,17 @@ export interface DisplayConfigState {
 	layout: 'default' | 'compact';
 }
 
+export interface DisplayAudioSettings {
+	enabled: boolean;
+	volume: number;
+	voiceLang?: string;
+}
+
 export interface AuthSession {
 	token: string;
 	username: string;
 	role: 'operator' | 'admin';
+	assignedCounterId: number | null;
 	expiresAt: number;
 }
 
@@ -106,4 +113,3 @@ export type QueueSocketEvent =
 	| { type: 'announcement_update'; payload: AnnouncementUpdatePayload; clientId?: string };
 
 export type SocketConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-
