@@ -18,7 +18,7 @@
 		updateCounterService
 	} from '$lib/stores/counterStore';
 	import { queueMetrics } from '$lib/stores/queueStore';
-	import { broadcastAnnouncements } from '$lib/stores/socketStore';
+	import { broadcastAnnouncements, broadcastCounterState } from '$lib/stores/socketStore';
 
 	let username = 'admin';
 	let password = 'admin123';
@@ -98,7 +98,14 @@
 	function handleServiceChange(counterId: number, event: Event) {
 		const value = (event.currentTarget as HTMLSelectElement).value;
 		updateCounterService(counterId, value);
+		broadcastCounterState(counterId);
 		panelMessage = `Service untuk Loket ${counterId} diperbarui.`;
+	}
+
+	function handleToggleCounter(counterId: number) {
+		toggleCounterOffline(counterId);
+		broadcastCounterState(counterId);
+		panelMessage = `Status Loket ${counterId} diperbarui.`;
 	}
 </script>
 
@@ -310,7 +317,7 @@
 						</span>
 						<button
 							class="rounded-md border border-amber-300 px-3 py-2 text-sm text-amber-700 transition hover:bg-amber-50"
-							on:click={() => toggleCounterOffline(counter.id)}
+							on:click={() => handleToggleCounter(counter.id)}
 						>
 							{counter.status === 'offline' ? 'Set Idle' : 'Set Offline'}
 						</button>

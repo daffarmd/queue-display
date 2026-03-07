@@ -74,6 +74,8 @@ export interface QueueCalledPayload {
 	counter: number;
 	serviceId: string;
 	service: string;
+	calledAt?: number;
+	recallCount?: number;
 }
 
 export interface QueueCompletedPayload {
@@ -92,24 +94,118 @@ export interface CounterUpdatePayload {
 	queue: string | null;
 	serviceId: string | null;
 	service: string | null;
+	waitingQueues?: Record<string, QueueSocketWaitingEntry[]>;
+	seq?: number;
+	serverTime?: string;
 }
 
 export interface QueueTakenPayload {
 	queue: string;
 	serviceId: string;
 	service: string;
+	createdAt?: number;
 }
 
 export interface AnnouncementUpdatePayload {
-	announcements: Announcement[];
+	announcements?: Announcement[];
+	enabled?: boolean;
+}
+
+export interface QueueSocketWaitingEntry {
+	queueNumber?: string;
+	queue?: string;
+	serviceId?: string;
+	service?: string;
+	serviceName?: string;
+	createdAt?: number | string;
+	calledAt?: number | string;
+	recallCount?: number | string;
+	[key: string]: unknown;
+}
+
+export interface QueueSocketActiveCall {
+	queueNumber: string;
+	counterId: string;
+	eventId?: string;
+	seq: number;
+	updatedAt: string;
+	meta?: Record<string, unknown>;
+}
+
+export interface QueueSocketCounterState {
+	counterId: string;
+	status: string;
+	queueNumber?: string;
+	seq: number;
+	updatedAt: string;
+	meta?: Record<string, unknown>;
+}
+
+export interface QueueSocketSnapshot {
+	branchId: string;
+	seq: number;
+	serverTime: string;
+	activeCalls: Record<string, QueueSocketActiveCall>;
+	counterStates: Record<string, QueueSocketCounterState>;
+	waitingQueues: Record<string, QueueSocketWaitingEntry[]>;
+	announcementEnabled: boolean;
+	announcements?: Announcement[];
+}
+
+export interface QueueSocketCommandError {
+	code: string;
+	message: string;
+	event: string;
+	eventId?: string;
+	branchId?: string;
+	counterId?: string;
+	seq: number;
+	serverTime: string;
+	details?: Record<string, unknown>;
 }
 
 export type QueueSocketEvent =
-	| { type: 'queue_called'; payload: QueueCalledPayload; clientId?: string }
-	| { type: 'queue_completed'; payload: QueueCompletedPayload; clientId?: string }
-	| { type: 'queue_skipped'; payload: QueueSkippedPayload; clientId?: string }
-	| { type: 'counter_update'; payload: CounterUpdatePayload; clientId?: string }
-	| { type: 'queue_taken'; payload: QueueTakenPayload; clientId?: string }
-	| { type: 'announcement_update'; payload: AnnouncementUpdatePayload; clientId?: string };
+	| {
+			type: 'queue_called';
+			payload: QueueCalledPayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  }
+	| {
+			type: 'queue_completed';
+			payload: QueueCompletedPayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  }
+	| {
+			type: 'queue_skipped';
+			payload: QueueSkippedPayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  }
+	| {
+			type: 'counter_update';
+			payload: CounterUpdatePayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  }
+	| {
+			type: 'queue_taken';
+			payload: QueueTakenPayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  }
+	| {
+			type: 'announcement_update';
+			payload: AnnouncementUpdatePayload;
+			clientId?: string;
+			eventId?: string;
+			emittedAt?: number;
+	  };
 
 export type SocketConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';

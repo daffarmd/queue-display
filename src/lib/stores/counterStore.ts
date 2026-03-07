@@ -1,5 +1,11 @@
 import { derived } from 'svelte/store';
-import type { Counter, CounterState, CounterStatus, CounterUpdatePayload } from '$lib/types';
+import type {
+	Counter,
+	CounterState,
+	CounterStatus,
+	CounterUpdatePayload,
+	QueueSocketSnapshot
+} from '$lib/types';
 import { persistentWritable } from '$lib/utils/persistent';
 
 const now = () => Date.now();
@@ -64,12 +70,37 @@ const initialState: CounterState = {
 	nextCounterId: 7
 };
 
-const counterState = persistentWritable<CounterState>('queue-counter-state-v1', initialState);
+const counterState = persistentWritable<CounterState>('queue-counter-state-v2', initialState, {
+	syncTabs: false
+});
 
 export const counters = derived(counterState, ($state) => $state.counters);
 
 function updateCounterById(counters: Counter[], counterId: number, updater: (counter: Counter) => Counter): Counter[] {
 	return counters.map((counter) => (counter.id === counterId ? updater(counter) : counter));
+}
+
+function parseTimestamp(value: unknown, fallback: number): number {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	if (typeof value === 'string') {
+		const numeric = Number(value);
+		if (Number.isFinite(numeric)) return numeric;
+		const parsed = Date.parse(value);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return fallback;
+}
+
+function normalizeCounterStatus(value: unknown, fallback: CounterStatus): CounterStatus {
+	switch (value) {
+		case 'idle':
+		case 'calling':
+		case 'serving':
+		case 'offline':
+			return value;
+		default:
+			return fallback;
+	}
 }
 
 export function setCounterStatus(counterId: number, status: CounterStatus): void {
@@ -201,7 +232,44 @@ export function syncCounterUpdate(payload: CounterUpdatePayload): void {
 	}));
 }
 
+export function syncCounterSnapshot(snapshot: QueueSocketSnapshot): void {
+	counterState.update((current) => ({
+		...current,
+		counters: current.counters.map((counter) => {
+			const remoteState = snapshot.counterStates?.[String(counter.id)];
+			if (!remoteState) return counter;
+
+			const meta = remoteState.meta ?? {};
+			const queue = remoteState.queueNumber?.trim() ? remoteState.queueNumber : null;
+			const serviceId =
+				typeof meta.serviceId === 'string' && meta.serviceId.trim()
+					? meta.serviceId.trim()
+					: counter.serviceId;
+			const serviceName =
+				queue &&
+				typeof meta.service === 'string' &&
+				meta.service.trim()
+					? meta.service.trim()
+					: queue &&
+						  typeof meta.serviceName === 'string' &&
+						  meta.serviceName.trim()
+						? meta.serviceName.trim()
+						: queue
+							? counter.serviceName
+							: null;
+
+			return {
+				...counter,
+				status: normalizeCounterStatus(remoteState.status, counter.status),
+				currentQueue: queue,
+				serviceId,
+				serviceName,
+				updatedAt: parseTimestamp(remoteState.updatedAt, now())
+			};
+		})
+	}));
+}
+
 export function resetCounterState(): void {
 	counterState.set(initialState);
 }
-

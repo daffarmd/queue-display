@@ -21,11 +21,14 @@
 </script>
 
 <svelte:head>
-	<title>Display | Queue System</title>
+	<title>Tes Display | Queue System</title>
 </svelte:head>
 
 <main class="tv-display min-h-screen p-4 md:p-6">
-	<HeaderBar title="Display Antrian Digital" subtitle="Layar TV / Monitor Real-time Queue" />
+	<HeaderBar
+		title="Display Antrian Test"
+		subtitle="Mode visual tanpa Audio Announcement"
+	/>
 
 	{#if showReconnectBanner}
 		<div class="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-700">
