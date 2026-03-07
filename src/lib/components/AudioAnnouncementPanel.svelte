@@ -1,9 +1,12 @@
 <script lang="ts">
 	import {
+		audioLastError,
 		audioEngineState,
 		displayAudioSettings,
+		ensureDisplayAudioEnabled,
 		initializeDisplayAudio,
 		isDisplayAudioSupported,
+		resumeDisplayAudio,
 		setDisplayAudioEnabled,
 		setDisplayAudioVolume,
 		speakAudioTest
@@ -37,6 +40,8 @@
 	}
 
 	function handleTest(): void {
+		ensureDisplayAudioEnabled();
+		resumeDisplayAudio();
 		speakAudioTest();
 	}
 </script>
@@ -69,6 +74,11 @@
 		/>
 	</div>
 	<p class="mt-2 text-xs text-slate-500">{engineLabel}</p>
+	{#if $audioLastError}
+		<p class="mt-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700">
+			{$audioLastError}
+		</p>
+	{/if}
 
 	<div class="mt-4">
 		<div class="mb-2 flex items-center justify-between">

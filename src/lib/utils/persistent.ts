@@ -10,7 +10,16 @@ function safeParse<T>(value: string | null, fallback: T): T {
 	}
 }
 
-export function persistentWritable<T>(key: string, initialValue: T): Writable<T> {
+interface PersistentWritableOptions {
+	syncTabs?: boolean;
+}
+
+export function persistentWritable<T>(
+	key: string,
+	initialValue: T,
+	options?: PersistentWritableOptions
+): Writable<T> {
+	const syncTabs = options?.syncTabs ?? true;
 	const startingValue = browser ? safeParse(localStorage.getItem(key), initialValue) : initialValue;
 	const store = writable<T>(startingValue);
 
@@ -19,12 +28,13 @@ export function persistentWritable<T>(key: string, initialValue: T): Writable<T>
 			localStorage.setItem(key, JSON.stringify(value));
 		});
 
-		window.addEventListener('storage', (event) => {
-			if (event.key !== key) return;
-			store.set(safeParse<T>(event.newValue, initialValue));
-		});
+		if (syncTabs) {
+			window.addEventListener('storage', (event) => {
+				if (event.key !== key) return;
+				store.set(safeParse<T>(event.newValue, initialValue));
+			});
+		}
 	}
 
 	return store;
 }
-

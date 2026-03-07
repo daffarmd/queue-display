@@ -3,6 +3,10 @@ import type {
 	QueueCalledPayload,
 	QueueCompletedPayload,
 	QueueSkippedPayload,
+	QueueSocketActiveCall,
+	QueueSocketCounterState,
+	QueueSocketSnapshot,
+	QueueSocketWaitingEntry,
 	QueueState,
 	QueueTakenPayload,
 	QueueTicket,
@@ -45,7 +49,9 @@ const initialState: QueueState = {
 	}
 };
 
-const queueState = persistentWritable<QueueState>('queue-system-state-v1', initialState);
+const queueState = persistentWritable<QueueState>('queue-system-state-v2', initialState, {
+	syncTabs: false
+});
 
 export const waitingTickets = derived(queueState, ($state) => $state.waiting);
 export const latestQueueCall = derived(queueState, ($state) => $state.latestCall);
@@ -74,6 +80,176 @@ export const queueMetrics = derived(queueState, ($state) => {
 		averageServiceDurationMs
 	};
 });
+
+function parseTimestamp(value: unknown, fallback: number): number {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	if (typeof value === 'string') {
+		const numeric = Number(value);
+		if (Number.isFinite(numeric)) return numeric;
+		const parsed = Date.parse(value);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return fallback;
+}
+
+function parseNumericCounterId(value: unknown): number | null {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return Math.trunc(value);
+	}
+	if (typeof value === 'string' && /^[0-9]+$/.test(value.trim())) {
+		return Number(value);
+	}
+	return null;
+}
+
+function splitQueueNumber(queue: string): { prefix: string; sequence: number } | null {
+	const match = queue.trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+	if (!match) return null;
+	return {
+		prefix: match[1],
+		sequence: Number(match[2])
+	};
+}
+
+function bumpSequenceByQueue(
+	sequenceByPrefix: Record<string, number>,
+	queue: string
+): Record<string, number> {
+	const parts = splitQueueNumber(queue);
+	if (!parts) return sequenceByPrefix;
+
+	const current = sequenceByPrefix[parts.prefix] ?? 0;
+	if (parts.sequence <= current) return sequenceByPrefix;
+
+	return {
+		...sequenceByPrefix,
+		[parts.prefix]: parts.sequence
+	};
+}
+
+function fallbackServiceId(queue: string, waitingKey?: string): string {
+	if (waitingKey?.trim()) return waitingKey.trim();
+	const parts = splitQueueNumber(queue);
+	return parts ? parts.prefix.toLowerCase() : 'general';
+}
+
+function fallbackServiceName(serviceId: string): string {
+	return serviceId
+		.split('-')
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
+function ticketFromWaitingEntry(
+	entry: QueueSocketWaitingEntry | string,
+	waitingKey: string,
+	fallbackTime: number
+): QueueTicket | null {
+	const data =
+		typeof entry === 'string'
+			? ({ queueNumber: entry } satisfies QueueSocketWaitingEntry)
+			: entry;
+	const queue =
+		typeof data.queueNumber === 'string'
+			? data.queueNumber
+			: typeof data.queue === 'string'
+				? data.queue
+				: '';
+	if (!queue.trim()) return null;
+
+	const serviceId =
+		typeof data.serviceId === 'string' && data.serviceId.trim()
+			? data.serviceId.trim()
+			: fallbackServiceId(queue, waitingKey);
+	const serviceNameCandidate =
+		typeof data.service === 'string' && data.service.trim()
+			? data.service.trim()
+			: typeof data.serviceName === 'string' && data.serviceName.trim()
+				? data.serviceName.trim()
+				: fallbackServiceName(serviceId);
+
+	return {
+		queue,
+		serviceId,
+		serviceName: serviceNameCandidate,
+		status: 'waiting',
+		createdAt: parseTimestamp(data.createdAt, fallbackTime),
+		counterId: null,
+		calledAt: null,
+		completedAt: null,
+		recallCount:
+			typeof data.recallCount === 'number'
+				? data.recallCount
+				: Number(data.recallCount ?? 0) || 0
+	};
+}
+
+function ticketFromActiveCall(
+	activeCall: QueueSocketActiveCall,
+	counterState: QueueSocketCounterState | undefined,
+	fallbackTime: number
+): QueueTicket | null {
+	const queue = activeCall.queueNumber?.trim();
+	if (!queue) return null;
+
+	const meta = {
+		...(activeCall.meta ?? {}),
+		...(counterState?.meta ?? {})
+	};
+	const serviceId =
+		typeof meta.serviceId === 'string' && meta.serviceId.trim()
+			? meta.serviceId.trim()
+			: fallbackServiceId(queue);
+	const serviceName =
+		typeof meta.service === 'string' && meta.service.trim()
+			? meta.service.trim()
+			: typeof meta.serviceName === 'string' && meta.serviceName.trim()
+				? meta.serviceName.trim()
+				: fallbackServiceName(serviceId);
+	const counterId = parseNumericCounterId(counterState?.counterId ?? activeCall.counterId);
+	if (counterId === null) return null;
+
+	return {
+		queue,
+		serviceId,
+		serviceName,
+		status: counterState?.status === 'serving' ? 'serving' : 'called',
+		createdAt: parseTimestamp(meta.createdAt, fallbackTime),
+		counterId,
+		calledAt: parseTimestamp(meta.calledAt, fallbackTime),
+		completedAt: null,
+		recallCount:
+			typeof meta.recallCount === 'number'
+				? meta.recallCount
+				: Number(meta.recallCount ?? 0) || 0
+	};
+}
+
+function rebuildWaitingTickets(
+	waitingQueues: Record<string, QueueSocketWaitingEntry[]>,
+	activeTickets: Record<string, QueueTicket>,
+	current: QueueState,
+	fallbackTime: number
+): Pick<QueueState, 'waiting' | 'sequenceByPrefix'> {
+	const activeQueues = new Set(Object.values(activeTickets).map((ticket) => ticket.queue));
+	const nextWaiting: QueueTicket[] = [];
+	let nextSequenceByPrefix = { ...current.sequenceByPrefix };
+
+	for (const [waitingKey, entries] of Object.entries(waitingQueues ?? {})) {
+		for (const rawEntry of entries ?? []) {
+			const ticket = ticketFromWaitingEntry(rawEntry as QueueSocketWaitingEntry | string, waitingKey, fallbackTime);
+			if (!ticket || activeQueues.has(ticket.queue)) continue;
+			nextWaiting.push(ticket);
+			nextSequenceByPrefix = bumpSequenceByQueue(nextSequenceByPrefix, ticket.queue);
+		}
+	}
+
+	return {
+		waiting: nextWaiting,
+		sequenceByPrefix: nextSequenceByPrefix
+	};
+}
 
 function toCalledTicket(ticket: QueueTicket, counterId: number): QueueTicket {
 	return {
@@ -166,6 +342,7 @@ export function recallCurrent(counterId: number): QueueTicket | null {
 		const nextActive = {
 			...active,
 			status: 'called',
+			calledAt: now(),
 			recallCount: active.recallCount + 1
 		} satisfies QueueTicket;
 
@@ -302,7 +479,8 @@ export function syncQueueCalled(payload: QueueCalledPayload): void {
 			...source,
 			status: 'called',
 			counterId: payload.counter,
-			calledAt: now()
+			calledAt: payload.calledAt ?? now(),
+			recallCount: payload.recallCount ?? source.recallCount
 		} satisfies QueueTicket;
 
 		return {
@@ -312,7 +490,8 @@ export function syncQueueCalled(payload: QueueCalledPayload): void {
 				...current.activeByCounter,
 				[counterKey(payload.counter)]: called
 			},
-			latestCall: called
+			latestCall: called,
+			sequenceByPrefix: bumpSequenceByQueue(current.sequenceByPrefix, payload.queue)
 		};
 	});
 }
@@ -331,6 +510,20 @@ export function syncQueueServing(counterId: number): void {
 				[counterKey(counterId)]: serving
 			},
 			latestCall: isSameQueueTicket(current.latestCall, active) ? serving : current.latestCall
+		};
+	});
+}
+
+export function syncQueueCounterCleared(counterId: number): void {
+	queueState.update((current) => {
+		if (!current.activeByCounter[counterKey(counterId)]) return current;
+
+		const nextActive = { ...current.activeByCounter };
+		delete nextActive[counterKey(counterId)];
+
+		return {
+			...current,
+			activeByCounter: nextActive
 		};
 	});
 }
@@ -387,10 +580,73 @@ export function syncQueueTaken(payload: QueueTakenPayload): void {
 		if (exists) return current;
 
 		const created = makeTicket(payload.queue, payload.serviceId, payload.service);
+		created.createdAt = payload.createdAt ?? created.createdAt;
 
 		return {
 			...current,
-			waiting: [...current.waiting, created]
+			waiting: [...current.waiting, created],
+			sequenceByPrefix: bumpSequenceByQueue(current.sequenceByPrefix, payload.queue)
+		};
+	});
+}
+
+export function syncWaitingQueues(
+	waitingQueues: Record<string, QueueSocketWaitingEntry[]>,
+	serverTime?: string
+): void {
+	queueState.update((current) => ({
+		...current,
+		...rebuildWaitingTickets(
+			waitingQueues,
+			current.activeByCounter,
+			current,
+			parseTimestamp(serverTime, now())
+		)
+	}));
+}
+
+export function syncQueueSnapshot(snapshot: QueueSocketSnapshot): void {
+	queueState.update((current) => {
+		const fallbackTime = parseTimestamp(snapshot.serverTime, now());
+		const nextActiveByCounter: Record<string, QueueTicket> = {};
+		let nextLatestCall: QueueTicket | null = current.latestCall;
+		let highestSeq = -1;
+		let nextSequenceByPrefix = { ...current.sequenceByPrefix };
+
+		for (const [counterKeyFromSnapshot, activeCall] of Object.entries(snapshot.activeCalls ?? {})) {
+			const counterState =
+				snapshot.counterStates?.[counterKeyFromSnapshot] ??
+				snapshot.counterStates?.[activeCall.counterId];
+			const ticket = ticketFromActiveCall(activeCall, counterState, fallbackTime);
+			if (!ticket) continue;
+
+			nextActiveByCounter[String(ticket.counterId)] = ticket;
+			nextSequenceByPrefix = bumpSequenceByQueue(nextSequenceByPrefix, ticket.queue);
+
+			const currentSeq = counterState?.seq ?? activeCall.seq ?? 0;
+			if (currentSeq >= highestSeq) {
+				highestSeq = currentSeq;
+				nextLatestCall = ticket;
+			}
+		}
+
+		const waitingState = rebuildWaitingTickets(
+			snapshot.waitingQueues ?? {},
+			nextActiveByCounter,
+			{
+				...current,
+				activeByCounter: nextActiveByCounter,
+				sequenceByPrefix: nextSequenceByPrefix
+			},
+			fallbackTime
+		);
+
+		return {
+			...current,
+			waiting: waitingState.waiting,
+			activeByCounter: nextActiveByCounter,
+			latestCall: nextLatestCall,
+			sequenceByPrefix: waitingState.sequenceByPrefix
 		};
 	});
 }

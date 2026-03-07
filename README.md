@@ -43,7 +43,11 @@ By default, real-time updates work via browser `BroadcastChannel` (cross-tab).
 If you have a backend websocket/socket.io server, set:
 
 ```bash
-PUBLIC_SOCKET_URL=http://localhost:3000
+PUBLIC_SOCKET_URL=http://localhost:8081
+PUBLIC_SOCKET_NAMESPACE=/queue
+PUBLIC_SOCKET_BRANCH=main
 ```
 
 The display will show reconnecting status and retry every 3 seconds when disconnected.
+
+For the paired `queue-socket` service in this workspace, run the Go server on `:8081`.

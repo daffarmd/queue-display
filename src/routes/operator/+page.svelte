@@ -127,7 +127,11 @@
 	function handleRecall() {
 		if (!ensureCounterAccess() || !selectedCounter) return;
 		const ticket = operatorRecall(selectedCounter.id);
-		actionMessage = ticket ? `Panggil ulang ${ticket.queue}.` : 'Belum ada nomor aktif di loket.';
+		if (ticket) {
+			actionMessage = `Panggil ulang ${ticket.queue}.`;
+			return;
+		}
+		actionMessage = 'Belum ada nomor aktif di loket.';
 	}
 
 	function handleStartServing() {
@@ -348,6 +352,7 @@
 						{actionMessage}
 					</p>
 				{/if}
+
 			</section>
 
 			<aside class="panel p-5">

@@ -3,10 +3,10 @@ import { derived, get, writable } from 'svelte/store';
 import type { DisplayAudioSettings, QueueCalledPayload } from '$lib/types';
 import { persistentWritable } from '$lib/utils/persistent';
 
-const STORAGE_KEY = 'queue-display-audio-settings-v1';
+const STORAGE_KEY = 'queue-display-audio-settings-v4';
 
 const defaultSettings: DisplayAudioSettings = {
-	enabled: false,
+	enabled: true,
 	volume: 1,
 	voiceLang: undefined
 };
@@ -22,16 +22,27 @@ export const audioEngineState = derived(supportState, ($state) =>
 	$state === 'available' ? 'browser' : 'unavailable'
 );
 export const isDisplayAudioSupported = derived(supportState, ($state) => $state === 'available');
+export const audioLastError = writable<string | null>(null);
 
 let initialized = false;
 let synth: SpeechSynthesis | null = null;
 let selectedVoice: SpeechSynthesisVoice | null = null;
 let playbackSession = 0;
 let pendingSegmentTimeout: ReturnType<typeof setTimeout> | null = null;
+let warmupDone = false;
+let lastQueueCallSignature = '';
+let lastQueueCallAt = 0;
+const CALL_DEDUPE_WINDOW_MS = 2500;
+
+function formatSpeechError(errorValue: unknown): string {
+	const normalized = typeof errorValue === 'string' ? errorValue : 'unknown';
+	return `Mesin TTS browser gagal memutar suara (${normalized}).`;
+}
 
 const FEMALE_HINTS = ['female', 'woman', 'girl', 'zira', 'gadis', 'perempuan', 'siti', 'putri'];
 const MALE_HINTS = ['male', 'man', 'boy', 'andika', 'ardi', 'pria', 'laki'];
-const NATURAL_HINTS = ['natural', 'neural', 'online'];
+const NATURAL_HINTS = ['natural', 'neural', 'online', 'google', 'microsoft', 'siri', 'premium'];
+const ROBOTIC_HINTS = ['espeak', 'festival', 'mbrola', 'robot'];
 const DIGIT_WORDS: Record<string, string> = {
 	'0': 'nol',
 	'1': 'satu',
@@ -67,11 +78,13 @@ function scoreVoice(voice: SpeechSynthesisVoice, preferredLang?: string): number
 	const name = voice.name.toLowerCase();
 	let score = 0;
 
-	if (preferredLang && lang === preferredLang.toLowerCase()) score += 80;
-	if (isIndonesianVoice(voice)) score += 70;
-	if (isFemaleVoice(voice)) score += 40;
-	if (lang.startsWith('id')) score += 20;
+	if (preferredLang && lang === preferredLang.toLowerCase()) score += 90;
+	if (isIndonesianVoice(voice)) score += 110;
+	if (lang.startsWith('id')) score += 60;
+	if (isFemaleVoice(voice)) score += 20;
 	if (NATURAL_HINTS.some((hint) => name.includes(hint))) score += 35;
+	if (ROBOTIC_HINTS.some((hint) => name.includes(hint))) score -= 120;
+	if (voice.localService) score += 8;
 
 	return score;
 }
@@ -111,15 +124,16 @@ function createUtterance(
 	const settings = get(displayAudioSettings);
 	const utterance = new SpeechSynthesisUtterance(text);
 	utterance.volume = clampVolume(settings.volume);
-	utterance.rate = options?.rate ?? 0.9;
-	utterance.pitch = options?.pitch ?? 1.07;
+	utterance.rate = options?.rate ?? 0.95;
+	utterance.pitch = options?.pitch ?? 1;
 
 	const voice = selectedVoice ?? pickVoice(settings.voiceLang);
 	if (voice) {
 		utterance.voice = voice;
-		utterance.lang = isIndonesianVoice(voice) ? voice.lang : 'id-ID';
+		// Keep utterance language aligned with selected voice for better browser compatibility.
+		utterance.lang = voice.lang || settings.voiceLang || navigator.language || 'en-US';
 	} else {
-		utterance.lang = settings.voiceLang ?? 'id-ID';
+		utterance.lang = settings.voiceLang ?? navigator.language ?? 'en-US';
 	}
 
 	return utterance;
@@ -134,19 +148,72 @@ function stopSpeech(): void {
 	if (synth) synth.cancel();
 }
 
+function speakUsingDefaultVoice(text: string): void {
+	if (!ensureAudioReady() || !synth || !text.trim()) return;
+
+	stopSpeech();
+	const settings = get(displayAudioSettings);
+	const utterance = new SpeechSynthesisUtterance(text);
+	utterance.volume = clampVolume(settings.volume);
+	utterance.rate = 0.95;
+	utterance.pitch = 1;
+	utterance.lang = 'id-ID';
+
+	utterance.onstart = () => {
+		audioLastError.set(null);
+	};
+
+	utterance.onerror = (event: Event) => {
+		const speechEvent = event as SpeechSynthesisErrorEvent;
+		audioLastError.set(formatSpeechError(speechEvent.error));
+	};
+
+	synth.speak(utterance);
+}
+
+function ensureAudioReady(): boolean {
+	if (!browser) return false;
+	if (!initialized) initializeDisplayAudio();
+	if (!synth) return false;
+	return get(supportState) === 'available';
+}
+
+export function resumeDisplayAudio(): void {
+	if (!ensureAudioReady() || !synth) return;
+	try {
+		synth.resume();
+	} catch {
+		// noop
+	}
+}
+
+export function ensureDisplayAudioEnabled(): void {
+	const settings = get(displayAudioSettings);
+	if (!settings.enabled) setDisplayAudioEnabled(true);
+}
+
 function speakSegmented(
 	segments: Array<{
 		text: string;
 		rate?: number;
 		pitch?: number;
 		pauseMs?: number;
-	}>
+	}>,
+	options?: {
+		interrupt?: boolean;
+	}
 ): void {
-	if (!browser || !synth || get(supportState) !== 'available') return;
+	if (!ensureAudioReady() || !synth) return;
 	const validSegments = segments.filter((segment) => segment.text.trim().length > 0);
 	if (validSegments.length === 0) return;
+	const plainFallbackText = validSegments.map((segment) => segment.text.trim()).join(' ');
+	let fallbackAttempted = false;
+	const shouldInterrupt = options?.interrupt ?? true;
 
-	stopSpeech();
+	resumeDisplayAudio();
+	if (shouldInterrupt) {
+		stopSpeech();
+	}
 	const currentSession = playbackSession;
 	let currentIndex = 0;
 
@@ -160,6 +227,10 @@ function speakSegmented(
 			pitch: segment.pitch
 		});
 		if (!utterance) return;
+
+		utterance.onstart = () => {
+			audioLastError.set(null);
+		};
 
 		utterance.onend = () => {
 			if (currentSession !== playbackSession) return;
@@ -175,8 +246,17 @@ function speakSegmented(
 			}
 		};
 
-		utterance.onerror = () => {
+		utterance.onerror = (event: Event) => {
 			if (currentSession !== playbackSession) return;
+			const speechEvent = event as SpeechSynthesisErrorEvent;
+			audioLastError.set(formatSpeechError(speechEvent.error));
+
+			if (!fallbackAttempted) {
+				fallbackAttempted = true;
+				speakUsingDefaultVoice(plainFallbackText);
+				return;
+			}
+
 			currentIndex += 1;
 			speakNext();
 		};
@@ -198,8 +278,30 @@ export function initializeDisplayAudio(): void {
 
 	synth = window.speechSynthesis;
 	supportState.set('available');
+	audioLastError.set(null);
+	// Warm-up voice list to reduce first-call drop on some browsers.
+	try {
+		synth.getVoices();
+	} catch {
+		// noop
+	}
 	refreshVoice();
 	synth.addEventListener('voiceschanged', refreshVoice);
+}
+
+function warmupSpeechEngine(): void {
+	if (!ensureAudioReady() || !synth || warmupDone) return;
+	try {
+		const probe = new SpeechSynthesisUtterance(' ');
+		probe.volume = 0;
+		probe.rate = 1;
+		probe.pitch = 1;
+		synth.speak(probe);
+		synth.cancel();
+		warmupDone = true;
+	} catch {
+		// noop
+	}
 }
 
 export function setDisplayAudioEnabled(enabled: boolean): void {
@@ -218,56 +320,39 @@ export function setDisplayAudioVolume(volume: number): void {
 }
 
 export function speakQueueCall(payload: QueueCalledPayload): void {
-	if (!get(displayAudioSettings).enabled) return;
+	ensureDisplayAudioEnabled();
+	resumeDisplayAudio();
+	warmupSpeechEngine();
+
+	const callSignature = `${payload.queue}-${payload.counter}-${payload.calledAt ?? 0}-${payload.recallCount ?? 0}`;
+	const nowMs = Date.now();
+	if (callSignature === lastQueueCallSignature && nowMs - lastQueueCallAt < CALL_DEDUPE_WINDOW_MS) {
+		return;
+	}
+	lastQueueCallSignature = callSignature;
+	lastQueueCallAt = nowMs;
 
 	const queueSpeech = toSpokenQueue(payload.queue);
 	const counterSpeech = toSpokenCounter(payload.counter);
 
 	speakSegmented([
 		{
-			text: 'Perhatian, nasabah yang terhormat.',
-			rate: 0.92,
-			pitch: 1.06,
-			pauseMs: 120
-		},
-		{
-			text: `Nomor antrian ${queueSpeech}.`,
-			rate: 0.84,
-			pitch: 1.1,
-			pauseMs: 160
-		},
-		{
-			text: `Silakan menuju loket ${counterSpeech}.`,
-			rate: 0.9,
-			pitch: 1.07,
-			pauseMs: 100
-		},
-		{
-			text: 'Terima kasih.',
-			rate: 0.94,
-			pitch: 1.05
+			text: `Perhatian. Nomor antrian ${queueSpeech}, silakan menuju loket ${counterSpeech}. Terima kasih.`,
+			rate: 0.93,
+			pitch: 1
 		}
-	]);
+	], { interrupt: false });
 }
 
 export function speakAudioTest(): void {
+	ensureDisplayAudioEnabled();
+	resumeDisplayAudio();
+	warmupSpeechEngine();
 	speakSegmented([
 		{
-			text: 'Tes suara panggilan aktif.',
-			rate: 0.94,
-			pitch: 1.06,
-			pauseMs: 90
-		},
-		{
-			text: 'Perhatian, nomor antrian ce es nol nol empat belas.',
-			rate: 0.84,
-			pitch: 1.1,
-			pauseMs: 120
-		},
-		{
-			text: 'Silakan menuju loket tiga. Terima kasih.',
-			rate: 0.9,
-			pitch: 1.07
+			text: 'Tes suara. Perhatian, nomor antrian ce es nol nol empat belas, silakan menuju loket tiga. Terima kasih.',
+			rate: 0.93,
+			pitch: 1
 		}
 	]);
 }
